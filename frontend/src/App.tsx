@@ -24,6 +24,7 @@ type Comment = {
 type User = {
   id: number;
   username: string;
+  isModerator: boolean;
 };
 
 function App() {
@@ -56,6 +57,17 @@ function App() {
   const [loginName, setLoginName] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
+
+  const [editingPostId, setEditingPostId] = useState<number | null>(null);
+  const [editPostTitle, setEditPostTitle] = useState("");
+  const [editPostContent, setEditPostContent] = useState("");
+  const [editPostError, setEditPostError] = useState<string | null>(null);
+  const [savingPost, setSavingPost] = useState(false);
+
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editCommentContent, setEditCommentContent] = useState("");
+  const [editCommentError, setEditCommentError] = useState<string | null>(null);
+  const [savingComment, setSavingComment] = useState(false);
 
   // Load topics on first render
   useEffect(() => {
@@ -127,6 +139,20 @@ function App() {
     setCurrentUser(null);
   };
 
+  const canModifyPost = (p: Post) => {
+    if (!currentUser) return false;
+    return (
+      currentUser.username === p.author || currentUser.isModerator === true
+    );
+  };
+
+  const canModifyComment = (c: Comment) => {
+    if (!currentUser) return false;
+    return (
+      currentUser.username === c.author || currentUser.isModerator === true
+    );
+  };
+
   // When a topic is clicked, load its posts
   const handleTopicClick = (topic: Topic) => {
     setSelectedTopic(topic);
@@ -144,6 +170,8 @@ function App() {
     setCreatePostError(null);
     setNewCommentContent("");
     setCreateCommentError(null);
+    setEditingPostId(null);
+    setEditingCommentId(null);
 
     console.log("Fetching posts for topic", topic.id);
 
@@ -179,6 +207,7 @@ function App() {
     // Reset comment form
     setNewCommentContent("");
     setCreateCommentError(null);
+    setEditingCommentId(null);
 
     console.log("Fetching comments for post", post.id);
 
@@ -261,6 +290,113 @@ function App() {
       });
   };
 
+  // Handle starting edit for a post
+  const startEditPost = (p: Post) => {
+    setEditingPostId(p.id);
+    setEditPostTitle(p.title);
+    setEditPostContent(p.content);
+    setEditPostError(null);
+  };
+
+  const cancelEditPost = () => {
+    setEditingPostId(null);
+    setEditPostTitle("");
+    setEditPostContent("");
+    setEditPostError(null);
+    setSavingPost(false);
+  };
+
+  // Handle saving edited post
+  const handleSavePost = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!currentUser || editingPostId === null) return;
+    if (!editPostTitle.trim() || !editPostContent.trim()) {
+      setEditPostError("Title and content cannot be empty.");
+      return;
+    }
+
+    setSavingPost(true);
+    setEditPostError(null);
+
+    const body = {
+      id: editingPostId,
+      userId: currentUser.id,
+      title: editPostTitle.trim(),
+      content: editPostContent.trim(),
+    };
+
+    fetch("http://localhost:8080/posts", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        console.log("Response from PUT /posts:", res.status, res.statusText);
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((updated: Post) => {
+        setPosts((prev) =>
+          prev.map((p) => (p.id === updated.id ? updated : p))
+        );
+        // If currently selectedPost is this one, update it too
+        setSelectedPost((prev) => (prev && prev.id === updated.id ? updated : prev));
+        cancelEditPost();
+      })
+      .catch((err: unknown) => {
+        console.error("Error while updating post:", err);
+        setEditPostError(
+          err instanceof Error ? err.message : "Unknown error updating post"
+        );
+        setSavingPost(false);
+      });
+  };
+
+  // Handle deleting a post
+  const handleDeletePost = (p: Post) => {
+    if (!currentUser) return;
+    const ok = window.confirm("Delete this post and all its comments?");
+    if (!ok) return;
+
+    const body = {
+      id: p.id,
+      userId: currentUser.id,
+    };
+
+    fetch("http://localhost:8080/posts", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        console.log("Response from DELETE /posts:", res.status, res.statusText);
+        if (!res.ok && res.status !== 204) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        // Remove post from list
+        setPosts((prev) => prev.filter((post) => post.id !== p.id));
+        // If it was selected, clear it and comments
+        setSelectedPost((prev) => (prev && prev.id === p.id ? null : prev));
+        if (selectedPost && selectedPost.id === p.id) {
+          setComments([]);
+        }
+      })
+      .catch((err: unknown) => {
+        console.error("Error while deleting post:", err);
+        alert(
+          err instanceof Error
+            ? `Error deleting post: ${err.message}`
+            : "Error deleting post"
+        );
+      });
+  };
+
   // Handle creating a new comment under the selected post
   const handleCreateComment = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -318,6 +454,112 @@ function App() {
       });
   };
 
+  // Handle starting edit for a comment
+  const startEditComment = (c: Comment) => {
+    setEditingCommentId(c.id);
+    setEditCommentContent(c.content);
+    setEditCommentError(null);
+  };
+
+  const cancelEditComment = () => {
+    setEditingCommentId(null);
+    setEditCommentContent("");
+    setEditCommentError(null);
+    setSavingComment(false);
+  };
+
+  // Handle saving edited comment
+  const handleSaveComment = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!currentUser || editingCommentId === null) return;
+    if (!editCommentContent.trim()) {
+      setEditCommentError("Comment content cannot be empty.");
+      return;
+    }
+
+    setSavingComment(true);
+    setEditCommentError(null);
+
+    const body = {
+      id: editingCommentId,
+      userId: currentUser.id,
+      content: editCommentContent.trim(),
+    };
+
+    fetch("http://localhost:8080/comments", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        console.log(
+          "Response from PUT /comments:",
+          res.status,
+          res.statusText
+        );
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((updated: Comment) => {
+        setComments((prev) =>
+          prev.map((c) => (c.id === updated.id ? updated : c))
+        );
+        cancelEditComment();
+      })
+      .catch((err: unknown) => {
+        console.error("Error while updating comment:", err);
+        setEditCommentError(
+          err instanceof Error
+            ? err.message
+            : "Unknown error updating comment"
+        );
+        setSavingComment(false);
+      });
+  };
+
+  // Handle deleting a comment
+  const handleDeleteComment = (c: Comment) => {
+    if (!currentUser) return;
+    const ok = window.confirm("Delete this comment?");
+    if (!ok) return;
+
+    const body = {
+      id: c.id,
+      userId: currentUser.id,
+    };
+
+    fetch("http://localhost:8080/comments", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        console.log(
+          "Response from DELETE /comments:",
+          res.status,
+          res.statusText
+        );
+        if (!res.ok && res.status !== 204) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        setComments((prev) => prev.filter((comment) => comment.id !== c.id));
+      })
+      .catch((err: unknown) => {
+        console.error("Error while deleting comment:", err);
+        alert(
+          err instanceof Error
+            ? `Error deleting comment: ${err.message}`
+            : "Error deleting comment"
+        );
+      });
+  };
+
   return (
     <div style={{ padding: "1rem", fontFamily: "system-ui, sans-serif" }}>
       <h1>Forum</h1>
@@ -336,7 +578,11 @@ function App() {
         {currentUser ? (
           <>
             <p>
-              Logged in as <strong>{currentUser.username}</strong>
+              Logged in as{" "}
+              <strong>
+                {currentUser.username}
+                {currentUser.isModerator ? " (moderator)" : ""}
+              </strong>
             </p>
             <button onClick={handleLogout}>Log out</button>
           </>
@@ -356,6 +602,9 @@ function App() {
             <button type="submit" disabled={loggingIn}>
               {loggingIn ? "Logging in..." : "Login / Sign up"}
             </button>
+            <p style={{ fontSize: "0.8rem", color: "#555", marginTop: "0.25rem" }}>
+              Tip: log in as <code>alice</code> to use moderator powers.
+            </p>
           </form>
         )}
       </section>
@@ -408,25 +657,76 @@ function App() {
             {!loadingPosts && !postsError && posts.length > 0 && (
               <ul>
                 {posts.map((p) => (
-                  <li key={p.id}>
-                    <button
-                      style={{
-                        border: "none",
-                        background: "none",
-                        color: "purple",
-                        textDecoration: "underline",
-                        cursor: "pointer",
-                        padding: 0,
-                        fontSize: "1rem",
-                      }}
-                      onClick={() => handlePostClick(p)}
-                    >
-                      <strong>{p.title}</strong>
-                    </button>
-                    <p>{p.content}</p>
-                    <p style={{ fontSize: "0.85rem", color: "#555" }}>
-                      by {p.author}
-                    </p>
+                  <li key={p.id} style={{ marginBottom: "0.75rem" }}>
+                    {editingPostId === p.id ? (
+                      <form onSubmit={handleSavePost}>
+                        <div style={{ marginBottom: "0.25rem" }}>
+                          <input
+                            type="text"
+                            value={editPostTitle}
+                            onChange={(e) => setEditPostTitle(e.target.value)}
+                            style={{ width: "100%", padding: "0.25rem" }}
+                          />
+                        </div>
+                        <div style={{ marginBottom: "0.25rem" }}>
+                          <textarea
+                            value={editPostContent}
+                            onChange={(e) =>
+                              setEditPostContent(e.target.value)
+                            }
+                            rows={3}
+                            style={{ width: "100%", padding: "0.25rem" }}
+                          />
+                        </div>
+                        {editPostError && (
+                          <p style={{ color: "red" }}>Error: {editPostError}</p>
+                        )}
+                        <button type="submit" disabled={savingPost}>
+                          {savingPost ? "Saving..." : "Save"}
+                        </button>{" "}
+                        <button type="button" onClick={cancelEditPost}>
+                          Cancel
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        <button
+                          style={{
+                            border: "none",
+                            background: "none",
+                            color: "purple",
+                            textDecoration: "underline",
+                            cursor: "pointer",
+                            padding: 0,
+                            fontSize: "1rem",
+                          }}
+                          onClick={() => handlePostClick(p)}
+                        >
+                          <strong>{p.title}</strong>
+                        </button>
+                        <p>{p.content}</p>
+                        <p style={{ fontSize: "0.85rem", color: "#555" }}>
+                          by {p.author}
+                        </p>
+                        {canModifyPost(p) && (
+                          <div style={{ fontSize: "0.85rem" }}>
+                            <button
+                              type="button"
+                              onClick={() => startEditPost(p)}
+                              style={{ marginRight: "0.5rem" }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePost(p)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -490,11 +790,56 @@ function App() {
             {!loadingComments && !commentsError && comments.length > 0 && (
               <ul>
                 {comments.map((c) => (
-                  <li key={c.id}>
-                    {c.content}
-                    <div style={{ fontSize: "0.85rem", color: "#555" }}>
-                      by {c.author}
-                    </div>
+                  <li key={c.id} style={{ marginBottom: "0.5rem" }}>
+                    {editingCommentId === c.id ? (
+                      <form onSubmit={handleSaveComment}>
+                        <div style={{ marginBottom: "0.25rem" }}>
+                          <textarea
+                            value={editCommentContent}
+                            onChange={(e) =>
+                              setEditCommentContent(e.target.value)
+                            }
+                            rows={2}
+                            style={{ width: "100%", padding: "0.25rem" }}
+                          />
+                        </div>
+                        {editCommentError && (
+                          <p style={{ color: "red" }}>
+                            Error: {editCommentError}
+                          </p>
+                        )}
+                        <button type="submit" disabled={savingComment}>
+                          {savingComment ? "Saving..." : "Save"}
+                        </button>{" "}
+                        <button type="button" onClick={cancelEditComment}>
+                          Cancel
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        <div>{c.content}</div>
+                        <div style={{ fontSize: "0.85rem", color: "#555" }}>
+                          by {c.author}
+                        </div>
+                        {canModifyComment(c) && (
+                          <div style={{ fontSize: "0.85rem" }}>
+                            <button
+                              type="button"
+                              onClick={() => startEditComment(c)}
+                              style={{ marginRight: "0.5rem" }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteComment(c)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
