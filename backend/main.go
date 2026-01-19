@@ -1,9 +1,13 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type Topic struct {
@@ -11,6 +15,8 @@ type Topic struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
+
+var db *sql.DB
 
 func withCORS(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -27,14 +33,65 @@ func withCORS(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func initDB() error {
+	var err error
+	db, err = sql.Open("sqlite3", "./forum.db")
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS topics (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			title TEXT NOT NULL,
+			description TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM topics").Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		_, err = db.Exec(`
+			INSERT INTO topics (title, description) VALUES
+				("General", "General discussion"),
+				("Homework", "Ask about assignments");
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "OK")
 }
 
 func topicsHandler(w http.ResponseWriter, r *http.Request) {
-	topics := []Topic{
-		{ID: 1, Title: "General", Description: "General discussion"},
-		{ID: 2, Title: "Homework", Description: "Ask about assignments"},
+	rows, err := db.Query("SELECT id, title, description FROM topics ORDER BY id")
+	if err != nil {
+		http.Error(w, "Failed to query topics", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var topics []Topic
+	for rows.Next() {
+		var t Topic
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description); err != nil {
+			http.Error(w, "Failed to scan topic", http.StatusInternalServerError)
+			return
+		}
+		topics = append(topics, t)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -44,6 +101,11 @@ func topicsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if err := initDB(); err != nil {
+		log.Fatal("Failed to initialise database:", err)
+	}
+	defer db.Close()
+
 	http.HandleFunc("/health", withCORS(healthHandler))
 	http.HandleFunc("/topics", withCORS(topicsHandler))
 
