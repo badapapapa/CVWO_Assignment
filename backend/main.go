@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -24,13 +25,7 @@ type Post struct {
 	TopicID int    `json:"topicId"`
 	Title   string `json:"title"`
 	Content string `json:"content"`
-}
-
-// CreatePostRequest represents the JSON body for creating a post.
-type CreatePostRequest struct {
-	TopicID int    `json:"topicId"`
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Author  string `json:"author"` // username of author
 }
 
 // Comment represents a comment under a post.
@@ -38,12 +33,33 @@ type Comment struct {
 	ID      int    `json:"id"`
 	PostID  int    `json:"postId"`
 	Content string `json:"content"`
+	Author  string `json:"author"` // username of author
+}
+
+// User represents a forum user.
+type User struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+}
+
+// CreatePostRequest represents the JSON body for creating a post.
+type CreatePostRequest struct {
+	TopicID int    `json:"topicId"`
+	UserID  int    `json:"userId"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
 }
 
 // CreateCommentRequest represents the JSON body for creating a comment.
 type CreateCommentRequest struct {
 	PostID  int    `json:"postId"`
+	UserID  int    `json:"userId"`
 	Content string `json:"content"`
+}
+
+// LoginRequest represents the JSON body for login.
+type LoginRequest struct {
+	Username string `json:"username"`
 }
 
 // Global DB handle
@@ -77,7 +93,18 @@ func initDB() error {
 		return err
 	}
 
-	// Create topics table if it doesn't exist
+	// Create users table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL UNIQUE
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create topics table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS topics (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,42 +117,60 @@ func initDB() error {
 		return err
 	}
 
-	// Create posts table if it doesn't exist
+	// Create posts table with user_id
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS posts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			topic_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
 			title TEXT NOT NULL,
 			content TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id)
+			FOREIGN KEY (topic_id) REFERENCES topics(id),
+			FOREIGN KEY (user_id) REFERENCES users(id)
 		);
 	`)
 	if err != nil {
 		return err
 	}
 
-	// Create comments table if it doesn't exist
+	// Create comments table with user_id
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS comments (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			post_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
 			content TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (post_id) REFERENCES posts(id)
+			FOREIGN KEY (post_id) REFERENCES posts(id),
+			FOREIGN KEY (user_id) REFERENCES users(id)
 		);
 	`)
 	if err != nil {
 		return err
 	}
 
-	// Seed topics if empty
-	var topicCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM topics").Scan(&topicCount)
-	if err != nil {
+	// Seed users if empty
+	var userCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
 		return err
 	}
+	if userCount == 0 {
+		_, err = db.Exec(`
+			INSERT INTO users (username) VALUES
+				("alice"),
+				("bob");
+		`)
+		if err != nil {
+			return err
+		}
+	}
 
+	// Seed topics if empty
+	var topicCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM topics").Scan(&topicCount); err != nil {
+		return err
+	}
 	if topicCount == 0 {
 		_, err = db.Exec(`
 			INSERT INTO topics (title, description) VALUES
@@ -139,18 +184,16 @@ func initDB() error {
 
 	// Seed posts if empty
 	var postCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM posts").Scan(&postCount)
-	if err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM posts").Scan(&postCount); err != nil {
 		return err
 	}
-
 	if postCount == 0 {
 		_, err = db.Exec(`
-			INSERT INTO posts (topic_id, title, content) VALUES
-				(1, "Welcome to the forum", "Introduce yourself and say hi!"),
-				(1, "General chat", "Talk about anything not related to homework."),
-				(2, "Math homework question", "I am stuck on question 3 of the worksheet."),
-				(2, "Project deadline reminder", "Don’t forget the assignment is due next week.");
+			INSERT INTO posts (topic_id, user_id, title, content) VALUES
+				(1, 1, "Welcome to the forum", "Introduce yourself and say hi!"),
+				(1, 2, "General chat", "Talk about anything not related to homework."),
+				(2, 1, "Math homework question", "I am stuck on question 3 of the worksheet."),
+				(2, 2, "Project deadline reminder", "Don’t forget the assignment is due next week.");
 		`)
 		if err != nil {
 			return err
@@ -159,19 +202,17 @@ func initDB() error {
 
 	// Seed comments if empty
 	var commentCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM comments").Scan(&commentCount)
-	if err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM comments").Scan(&commentCount); err != nil {
 		return err
 	}
-
 	if commentCount == 0 {
 		_, err = db.Exec(`
-			INSERT INTO comments (post_id, content) VALUES
-				(1, "Hello everyone!"),
-				(1, "Nice to meet you all."),
-				(2, "I love random chats."),
-				(3, "Same, I’m also stuck on that question."),
-				(4, "Thanks for the reminder!");
+			INSERT INTO comments (post_id, user_id, content) VALUES
+				(1, 1, "Hello everyone!"),
+				(1, 2, "Nice to meet you all."),
+				(2, 2, "I love random chats."),
+				(3, 1, "Same, I’m also stuck on that question."),
+				(4, 2, "Thanks for the reminder!");
 		`)
 		if err != nil {
 			return err
@@ -184,6 +225,55 @@ func initDB() error {
 // healthHandler handles GET /health and just returns "OK".
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "OK")
+}
+
+// loginHandler handles POST /login
+// It takes { "username": "alice" }, trims it, creates user if needed, and returns { id, username }.
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		http.Error(w, "Username cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Try to find existing user
+	var user User
+	err := db.QueryRow("SELECT id, username FROM users WHERE username = ?", username).
+		Scan(&user.ID, &user.Username)
+	if err == sql.ErrNoRows {
+		// Create new user
+		result, err := db.Exec("INSERT INTO users (username) VALUES (?)", username)
+		if err != nil {
+			http.Error(w, "Failed to create user", http.StatusInternalServerError)
+			return
+		}
+		newID, err := result.LastInsertId()
+		if err != nil {
+			http.Error(w, "Failed to get new user ID", http.StatusInternalServerError)
+			return
+		}
+		user.ID = int(newID)
+		user.Username = username
+	} else if err != nil {
+		http.Error(w, "Failed to query user", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(user); err != nil {
+		http.Error(w, "Failed to encode user", http.StatusInternalServerError)
+	}
 }
 
 // topicsHandler handles GET /topics and returns a list of topics from the DB.
@@ -211,7 +301,6 @@ func topicsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// postsHandler handles GET /posts?topicId=1 and returns posts for that topic.
 // postsHandler handles:
 //   - GET /posts?topicId=1    → list posts for a topic
 //   - POST /posts             → create a new post
@@ -228,7 +317,6 @@ func postsHandler(w http.ResponseWriter, r *http.Request) {
 
 // handleListPosts handles GET /posts?topicId=1
 func handleListPosts(w http.ResponseWriter, r *http.Request) {
-	// Read topicId from query string
 	topicIDStr := r.URL.Query().Get("topicId")
 	if topicIDStr == "" {
 		http.Error(w, "Missing topicId parameter", http.StatusBadRequest)
@@ -241,7 +329,13 @@ func handleListPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query("SELECT id, topic_id, title, content FROM posts WHERE topic_id = ? ORDER BY id", topicID)
+	rows, err := db.Query(`
+		SELECT posts.id, posts.topic_id, posts.title, posts.content, users.username
+		FROM posts
+		JOIN users ON posts.user_id = users.id
+		WHERE posts.topic_id = ?
+		ORDER BY posts.id
+	`, topicID)
 	if err != nil {
 		http.Error(w, "Failed to query posts", http.StatusInternalServerError)
 		return
@@ -251,7 +345,7 @@ func handleListPosts(w http.ResponseWriter, r *http.Request) {
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.ID, &p.TopicID, &p.Title, &p.Content); err != nil {
+		if err := rows.Scan(&p.ID, &p.TopicID, &p.Title, &p.Content, &p.Author); err != nil {
 			http.Error(w, "Failed to scan post", http.StatusInternalServerError)
 			return
 		}
@@ -271,14 +365,14 @@ func handleCreatePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.TopicID == 0 || req.Title == "" || req.Content == "" {
-		http.Error(w, "Missing topicId, title, or content", http.StatusBadRequest)
+	if req.TopicID == 0 || req.UserID == 0 || req.Title == "" || req.Content == "" {
+		http.Error(w, "Missing topicId, userId, title, or content", http.StatusBadRequest)
 		return
 	}
 
 	result, err := db.Exec(
-		"INSERT INTO posts (topic_id, title, content) VALUES (?, ?, ?)",
-		req.TopicID, req.Title, req.Content,
+		"INSERT INTO posts (topic_id, user_id, title, content) VALUES (?, ?, ?, ?)",
+		req.TopicID, req.UserID, req.Title, req.Content,
 	)
 	if err != nil {
 		http.Error(w, "Failed to insert post", http.StatusInternalServerError)
@@ -291,11 +385,18 @@ func handleCreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var author string
+	if err := db.QueryRow("SELECT username FROM users WHERE id = ?", req.UserID).Scan(&author); err != nil {
+		http.Error(w, "Failed to get author username", http.StatusInternalServerError)
+		return
+	}
+
 	created := Post{
 		ID:      int(newID),
 		TopicID: req.TopicID,
 		Title:   req.Title,
 		Content: req.Content,
+		Author:  author,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -321,7 +422,6 @@ func commentsHandler(w http.ResponseWriter, r *http.Request) {
 
 // handleListComments handles GET /comments?postId=1
 func handleListComments(w http.ResponseWriter, r *http.Request) {
-	// Read postId from query string
 	postIDStr := r.URL.Query().Get("postId")
 	if postIDStr == "" {
 		http.Error(w, "Missing postId parameter", http.StatusBadRequest)
@@ -334,7 +434,13 @@ func handleListComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query("SELECT id, post_id, content FROM comments WHERE post_id = ? ORDER BY id", postID)
+	rows, err := db.Query(`
+		SELECT comments.id, comments.post_id, comments.content, users.username
+		FROM comments
+		JOIN users ON comments.user_id = users.id
+		WHERE comments.post_id = ?
+		ORDER BY comments.id
+	`, postID)
 	if err != nil {
 		http.Error(w, "Failed to query comments", http.StatusInternalServerError)
 		return
@@ -344,7 +450,7 @@ func handleListComments(w http.ResponseWriter, r *http.Request) {
 	var comments []Comment
 	for rows.Next() {
 		var cmt Comment
-		if err := rows.Scan(&cmt.ID, &cmt.PostID, &cmt.Content); err != nil {
+		if err := rows.Scan(&cmt.ID, &cmt.PostID, &cmt.Content, &cmt.Author); err != nil {
 			http.Error(w, "Failed to scan comment", http.StatusInternalServerError)
 			return
 		}
@@ -364,14 +470,14 @@ func handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	if req.PostID == 0 || req.Content == "" {
-		http.Error(w, "Missing postId or content", http.StatusBadRequest)
+	if req.PostID == 0 || req.UserID == 0 || req.Content == "" {
+		http.Error(w, "Missing postId, userId, or content", http.StatusBadRequest)
 		return
 	}
 
 	result, err := db.Exec(
-		"INSERT INTO comments (post_id, content) VALUES (?, ?)",
-		req.PostID, req.Content,
+		"INSERT INTO comments (post_id, user_id, content) VALUES (?, ?, ?)",
+		req.PostID, req.UserID, req.Content,
 	)
 	if err != nil {
 		http.Error(w, "Failed to insert comment", http.StatusInternalServerError)
@@ -384,10 +490,17 @@ func handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var author string
+	if err := db.QueryRow("SELECT username FROM users WHERE id = ?", req.UserID).Scan(&author); err != nil {
+		http.Error(w, "Failed to get author username", http.StatusInternalServerError)
+		return
+	}
+
 	created := Comment{
 		ID:      int(newID),
 		PostID:  req.PostID,
 		Content: req.Content,
+		Author:  author,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -406,6 +519,7 @@ func main() {
 
 	// Register routes with CORS wrapper
 	http.HandleFunc("/health", withCORS(healthHandler))
+	http.HandleFunc("/login", withCORS(loginHandler))
 	http.HandleFunc("/topics", withCORS(topicsHandler))
 	http.HandleFunc("/posts", withCORS(postsHandler))
 	http.HandleFunc("/comments", withCORS(commentsHandler))

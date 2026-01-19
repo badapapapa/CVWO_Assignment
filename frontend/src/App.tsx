@@ -11,12 +11,19 @@ type Post = {
   topicId: number;
   title: string;
   content: string;
+  author: string;
 };
 
 type Comment = {
   id: number;
   postId: number;
   content: string;
+  author: string;
+};
+
+type User = {
+  id: number;
+  username: string;
 };
 
 function App() {
@@ -45,6 +52,11 @@ function App() {
     null
   );
 
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loginName, setLoginName] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+
   // Load topics on first render
   useEffect(() => {
     console.log("Fetching topics from backend...");
@@ -70,6 +82,50 @@ function App() {
         setLoadingTopics(false);
       });
   }, []);
+
+  // Login handler
+  const handleLogin = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const trimmed = loginName.trim();
+    if (!trimmed) {
+      setLoginError("Username cannot be empty.");
+      return;
+    }
+
+    setLoggingIn(true);
+    setLoginError(null);
+
+    fetch("http://localhost:8080/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username: trimmed }),
+    })
+      .then((res) => {
+        console.log("Response from /login:", res.status, res.statusText);
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((user: User) => {
+        console.log("Logged in as:", user);
+        setCurrentUser(user);
+        setLoggingIn(false);
+      })
+      .catch((err: unknown) => {
+        console.error("Error while logging in:", err);
+        setLoginError(
+          err instanceof Error ? err.message : "Unknown error during login"
+        );
+        setLoggingIn(false);
+      });
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+  };
 
   // When a topic is clicked, load its posts
   const handleTopicClick = (topic: Topic) => {
@@ -153,7 +209,9 @@ function App() {
   // Handle creating a new post under the selected topic
   const handleCreatePost = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedTopic) {
+    if (!selectedTopic) return;
+    if (!currentUser) {
+      setCreatePostError("You must be logged in to create a post.");
       return;
     }
     if (!newPostTitle.trim() || !newPostContent.trim()) {
@@ -166,6 +224,7 @@ function App() {
 
     const body = {
       topicId: selectedTopic.id,
+      userId: currentUser.id,
       title: newPostTitle.trim(),
       content: newPostContent.trim(),
     };
@@ -188,9 +247,7 @@ function App() {
       })
       .then((created: Post) => {
         console.log("Created post:", created);
-        // Add new post to list
         setPosts((prev) => [...prev, created]);
-        // Clear form
         setNewPostTitle("");
         setNewPostContent("");
         setCreatingPost(false);
@@ -207,7 +264,9 @@ function App() {
   // Handle creating a new comment under the selected post
   const handleCreateComment = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedPost) {
+    if (!selectedPost) return;
+    if (!currentUser) {
+      setCreateCommentError("You must be logged in to comment.");
       return;
     }
     if (!newCommentContent.trim()) {
@@ -220,6 +279,7 @@ function App() {
 
     const body = {
       postId: selectedPost.id,
+      userId: currentUser.id,
       content: newCommentContent.trim(),
     };
 
@@ -245,9 +305,7 @@ function App() {
       })
       .then((created: Comment) => {
         console.log("Created comment:", created);
-        // Add new comment to list
         setComments((prev) => [...prev, created]);
-        // Clear form
         setNewCommentContent("");
         setCreatingComment(false);
       })
@@ -263,6 +321,44 @@ function App() {
   return (
     <div style={{ padding: "1rem", fontFamily: "system-ui, sans-serif" }}>
       <h1>Forum</h1>
+
+      {/* Login section */}
+      <section
+        style={{
+          marginBottom: "1rem",
+          padding: "0.75rem",
+          border: "1px solid #ccc",
+          borderRadius: "4px",
+          maxWidth: "400px",
+        }}
+      >
+        <h2>Login</h2>
+        {currentUser ? (
+          <>
+            <p>
+              Logged in as <strong>{currentUser.username}</strong>
+            </p>
+            <button onClick={handleLogout}>Log out</button>
+          </>
+        ) : (
+          <form onSubmit={handleLogin}>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Username:{" "}
+                <input
+                  type="text"
+                  value={loginName}
+                  onChange={(e) => setLoginName(e.target.value)}
+                />
+              </label>
+            </div>
+            {loginError && <p style={{ color: "red" }}>Error: {loginError}</p>}
+            <button type="submit" disabled={loggingIn}>
+              {loggingIn ? "Logging in..." : "Login / Sign up"}
+            </button>
+          </form>
+        )}
+      </section>
 
       <section>
         <h2>Topics</h2>
@@ -328,6 +424,9 @@ function App() {
                       <strong>{p.title}</strong>
                     </button>
                     <p>{p.content}</p>
+                    <p style={{ fontSize: "0.85rem", color: "#555" }}>
+                      by {p.author}
+                    </p>
                   </li>
                 ))}
               </ul>
@@ -391,7 +490,12 @@ function App() {
             {!loadingComments && !commentsError && comments.length > 0 && (
               <ul>
                 {comments.map((c) => (
-                  <li key={c.id}>{c.content}</li>
+                  <li key={c.id}>
+                    {c.content}
+                    <div style={{ fontSize: "0.85rem", color: "#555" }}>
+                      by {c.author}
+                    </div>
+                  </li>
                 ))}
               </ul>
             )}
