@@ -34,6 +34,11 @@ function App() {
   const [loadingComments, setLoadingComments] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
 
+  const [newPostTitle, setNewPostTitle] = useState("");
+  const [newPostContent, setNewPostContent] = useState("");
+  const [creatingPost, setCreatingPost] = useState(false);
+  const [createPostError, setCreatePostError] = useState<string | null>(null);
+
   // Load topics on first render
   useEffect(() => {
     console.log("Fetching topics from backend...");
@@ -67,11 +72,14 @@ function App() {
     setPostsError(null);
     setLoadingPosts(true);
 
-    // Reset post + comments view
+    // Reset post + comments + form view
     setSelectedPost(null);
     setComments([]);
     setCommentsError(null);
     setLoadingComments(false);
+    setNewPostTitle("");
+    setNewPostContent("");
+    setCreatePostError(null);
 
     console.log("Fetching posts for topic", topic.id);
 
@@ -127,6 +135,60 @@ function App() {
             : "Unknown error fetching comments"
         );
         setLoadingComments(false);
+      });
+  };
+
+  // Handle creating a new post under the selected topic
+  const handleCreatePost = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTopic) {
+      return;
+    }
+    if (!newPostTitle.trim() || !newPostContent.trim()) {
+      setCreatePostError("Title and content cannot be empty.");
+      return;
+    }
+
+    setCreatingPost(true);
+    setCreatePostError(null);
+
+    const body = {
+      topicId: selectedTopic.id,
+      title: newPostTitle.trim(),
+      content: newPostContent.trim(),
+    };
+
+    console.log("Creating post:", body);
+
+    fetch("http://localhost:8080/posts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        console.log("Response from POST /posts:", res.status, res.statusText);
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((created: Post) => {
+        console.log("Created post:", created);
+        // Add new post to list
+        setPosts((prev) => [...prev, created]);
+        // Clear form
+        setNewPostTitle("");
+        setNewPostContent("");
+        setCreatingPost(false);
+      })
+      .catch((err: unknown) => {
+        console.error("Error while creating post:", err);
+        setCreatePostError(
+          err instanceof Error ? err.message : "Unknown error creating post"
+        );
+        setCreatingPost(false);
       });
   };
 
@@ -202,6 +264,40 @@ function App() {
                 ))}
               </ul>
             )}
+
+            <h3>Create a new post</h3>
+            <form onSubmit={handleCreatePost} style={{ maxWidth: "400px" }}>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <label>
+                  Title:
+                  <br />
+                  <input
+                    type="text"
+                    value={newPostTitle}
+                    onChange={(e) => setNewPostTitle(e.target.value)}
+                    style={{ width: "100%", padding: "0.25rem" }}
+                  />
+                </label>
+              </div>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <label>
+                  Content:
+                  <br />
+                  <textarea
+                    value={newPostContent}
+                    onChange={(e) => setNewPostContent(e.target.value)}
+                    rows={4}
+                    style={{ width: "100%", padding: "0.25rem" }}
+                  />
+                </label>
+              </div>
+              {createPostError && (
+                <p style={{ color: "red" }}>Error: {createPostError}</p>
+              )}
+              <button type="submit" disabled={creatingPost}>
+                {creatingPost ? "Creating..." : "Create post"}
+              </button>
+            </form>
           </>
         ) : (
           <p>Select a topic to view its posts.</p>

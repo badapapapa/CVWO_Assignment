@@ -26,6 +26,13 @@ type Post struct {
 	Content string `json:"content"`
 }
 
+// CreatePostRequest represents the JSON body for creating a post.
+type CreatePostRequest struct {
+	TopicID int    `json:"topicId"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
 // Comment represents a comment under a post.
 type Comment struct {
 	ID      int    `json:"id"`
@@ -199,7 +206,22 @@ func topicsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // postsHandler handles GET /posts?topicId=1 and returns posts for that topic.
+// postsHandler handles:
+//   - GET /posts?topicId=1    → list posts for a topic
+//   - POST /posts             → create a new post
 func postsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		handleListPosts(w, r)
+	case http.MethodPost:
+		handleCreatePost(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleListPosts handles GET /posts?topicId=1
+func handleListPosts(w http.ResponseWriter, r *http.Request) {
 	// Read topicId from query string
 	topicIDStr := r.URL.Query().Get("topicId")
 	if topicIDStr == "" {
@@ -233,6 +255,47 @@ func postsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(posts); err != nil {
 		http.Error(w, "Failed to encode posts", http.StatusInternalServerError)
+	}
+}
+
+// handleCreatePost handles POST /posts
+func handleCreatePost(w http.ResponseWriter, r *http.Request) {
+	var req CreatePostRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.TopicID == 0 || req.Title == "" || req.Content == "" {
+		http.Error(w, "Missing topicId, title, or content", http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec(
+		"INSERT INTO posts (topic_id, title, content) VALUES (?, ?, ?)",
+		req.TopicID, req.Title, req.Content,
+	)
+	if err != nil {
+		http.Error(w, "Failed to insert post", http.StatusInternalServerError)
+		return
+	}
+
+	newID, err := result.LastInsertId()
+	if err != nil {
+		http.Error(w, "Failed to get new post ID", http.StatusInternalServerError)
+		return
+	}
+
+	created := Post{
+		ID:      int(newID),
+		TopicID: req.TopicID,
+		Title:   req.Title,
+		Content: req.Content,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(created); err != nil {
+		http.Error(w, "Failed to encode created post", http.StatusInternalServerError)
 	}
 }
 
