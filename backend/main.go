@@ -40,6 +40,12 @@ type Comment struct {
 	Content string `json:"content"`
 }
 
+// CreateCommentRequest represents the JSON body for creating a comment.
+type CreateCommentRequest struct {
+	PostID  int    `json:"postId"`
+	Content string `json:"content"`
+}
+
 // Global DB handle
 var db *sql.DB
 
@@ -299,8 +305,22 @@ func handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// commentsHandler handles GET /comments?postId=1 and returns comments for that post.
+// commentsHandler handles:
+//   - GET /comments?postId=1    → list comments for a post
+//   - POST /comments            → create a new comment
 func commentsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		handleListComments(w, r)
+	case http.MethodPost:
+		handleCreateComment(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleListComments handles GET /comments?postId=1
+func handleListComments(w http.ResponseWriter, r *http.Request) {
 	// Read postId from query string
 	postIDStr := r.URL.Query().Get("postId")
 	if postIDStr == "" {
@@ -334,6 +354,46 @@ func commentsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(comments); err != nil {
 		http.Error(w, "Failed to encode comments", http.StatusInternalServerError)
+	}
+}
+
+// handleCreateComment handles POST /comments
+func handleCreateComment(w http.ResponseWriter, r *http.Request) {
+	var req CreateCommentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.PostID == 0 || req.Content == "" {
+		http.Error(w, "Missing postId or content", http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec(
+		"INSERT INTO comments (post_id, content) VALUES (?, ?)",
+		req.PostID, req.Content,
+	)
+	if err != nil {
+		http.Error(w, "Failed to insert comment", http.StatusInternalServerError)
+		return
+	}
+
+	newID, err := result.LastInsertId()
+	if err != nil {
+		http.Error(w, "Failed to get new comment ID", http.StatusInternalServerError)
+		return
+	}
+
+	created := Comment{
+		ID:      int(newID),
+		PostID:  req.PostID,
+		Content: req.Content,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(created); err != nil {
+		http.Error(w, "Failed to encode created comment", http.StatusInternalServerError)
 	}
 }
 

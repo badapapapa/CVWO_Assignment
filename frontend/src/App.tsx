@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, FormEvent } from "react";
 
 type Topic = {
   id: number;
@@ -39,6 +39,12 @@ function App() {
   const [creatingPost, setCreatingPost] = useState(false);
   const [createPostError, setCreatePostError] = useState<string | null>(null);
 
+  const [newCommentContent, setNewCommentContent] = useState("");
+  const [creatingComment, setCreatingComment] = useState(false);
+  const [createCommentError, setCreateCommentError] = useState<string | null>(
+    null
+  );
+
   // Load topics on first render
   useEffect(() => {
     console.log("Fetching topics from backend...");
@@ -72,7 +78,7 @@ function App() {
     setPostsError(null);
     setLoadingPosts(true);
 
-    // Reset post + comments + form view
+    // Reset post + comments + forms
     setSelectedPost(null);
     setComments([]);
     setCommentsError(null);
@@ -80,6 +86,8 @@ function App() {
     setNewPostTitle("");
     setNewPostContent("");
     setCreatePostError(null);
+    setNewCommentContent("");
+    setCreateCommentError(null);
 
     console.log("Fetching posts for topic", topic.id);
 
@@ -112,6 +120,10 @@ function App() {
     setCommentsError(null);
     setLoadingComments(true);
 
+    // Reset comment form
+    setNewCommentContent("");
+    setCreateCommentError(null);
+
     console.log("Fetching comments for post", post.id);
 
     fetch(`http://localhost:8080/comments?postId=${post.id}`)
@@ -139,7 +151,7 @@ function App() {
   };
 
   // Handle creating a new post under the selected topic
-  const handleCreatePost = (e: React.FormEvent) => {
+  const handleCreatePost = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedTopic) {
       return;
@@ -189,6 +201,62 @@ function App() {
           err instanceof Error ? err.message : "Unknown error creating post"
         );
         setCreatingPost(false);
+      });
+  };
+
+  // Handle creating a new comment under the selected post
+  const handleCreateComment = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedPost) {
+      return;
+    }
+    if (!newCommentContent.trim()) {
+      setCreateCommentError("Comment content cannot be empty.");
+      return;
+    }
+
+    setCreatingComment(true);
+    setCreateCommentError(null);
+
+    const body = {
+      postId: selectedPost.id,
+      content: newCommentContent.trim(),
+    };
+
+    console.log("Creating comment:", body);
+
+    fetch("http://localhost:8080/comments", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        console.log(
+          "Response from POST /comments:",
+          res.status,
+          res.statusText
+        );
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((created: Comment) => {
+        console.log("Created comment:", created);
+        // Add new comment to list
+        setComments((prev) => [...prev, created]);
+        // Clear form
+        setNewCommentContent("");
+        setCreatingComment(false);
+      })
+      .catch((err: unknown) => {
+        console.error("Error while creating comment:", err);
+        setCreateCommentError(
+          err instanceof Error ? err.message : "Unknown error creating comment"
+        );
+        setCreatingComment(false);
       });
   };
 
@@ -327,6 +395,24 @@ function App() {
                 ))}
               </ul>
             )}
+
+            <h3>Add a comment</h3>
+            <form onSubmit={handleCreateComment} style={{ maxWidth: "400px" }}>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <textarea
+                  value={newCommentContent}
+                  onChange={(e) => setNewCommentContent(e.target.value)}
+                  rows={3}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                />
+              </div>
+              {createCommentError && (
+                <p style={{ color: "red" }}>Error: {createCommentError}</p>
+              )}
+              <button type="submit" disabled={creatingComment}>
+                {creatingComment ? "Adding..." : "Add comment"}
+              </button>
+            </form>
           </>
         ) : (
           <p>Select a post to view its comments.</p>
