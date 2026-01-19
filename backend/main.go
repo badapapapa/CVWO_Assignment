@@ -26,6 +26,13 @@ type Post struct {
 	Content string `json:"content"`
 }
 
+// Comment represents a comment under a post.
+type Comment struct {
+	ID      int    `json:"id"`
+	PostID  int    `json:"postId"`
+	Content string `json:"content"`
+}
+
 // Global DB handle
 var db *sql.DB
 
@@ -85,6 +92,20 @@ func initDB() error {
 		return err
 	}
 
+	// Create comments table if it doesn't exist
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS comments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			post_id INTEGER NOT NULL,
+			content TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (post_id) REFERENCES posts(id)
+		);
+	`)
+	if err != nil {
+		return err
+	}
+
 	// Seed topics if empty
 	var topicCount int
 	err = db.QueryRow("SELECT COUNT(*) FROM topics").Scan(&topicCount)
@@ -123,6 +144,27 @@ func initDB() error {
 		}
 	}
 
+	// Seed comments if empty
+	var commentCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM comments").Scan(&commentCount)
+	if err != nil {
+		return err
+	}
+
+	if commentCount == 0 {
+		_, err = db.Exec(`
+			INSERT INTO comments (post_id, content) VALUES
+				(1, "Hello everyone!"),
+				(1, "Nice to meet you all."),
+				(2, "I love random chats."),
+				(3, "Same, I’m also stuck on that question."),
+				(4, "Thanks for the reminder!");
+		`)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -131,7 +173,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "OK")
 }
 
-// topicsHandler handles GET /topics and returns a list of topics as JSON from the DB.
+// topicsHandler handles GET /topics and returns a list of topics from the DB.
 func topicsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query("SELECT id, title, description FROM topics ORDER BY id")
 	if err != nil {
@@ -194,6 +236,44 @@ func postsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// commentsHandler handles GET /comments?postId=1 and returns comments for that post.
+func commentsHandler(w http.ResponseWriter, r *http.Request) {
+	// Read postId from query string
+	postIDStr := r.URL.Query().Get("postId")
+	if postIDStr == "" {
+		http.Error(w, "Missing postId parameter", http.StatusBadRequest)
+		return
+	}
+
+	postID, err := strconv.Atoi(postIDStr)
+	if err != nil {
+		http.Error(w, "Invalid postId parameter", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := db.Query("SELECT id, post_id, content FROM comments WHERE post_id = ? ORDER BY id", postID)
+	if err != nil {
+		http.Error(w, "Failed to query comments", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var comments []Comment
+	for rows.Next() {
+		var cmt Comment
+		if err := rows.Scan(&cmt.ID, &cmt.PostID, &cmt.Content); err != nil {
+			http.Error(w, "Failed to scan comment", http.StatusInternalServerError)
+			return
+		}
+		comments = append(comments, cmt)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(comments); err != nil {
+		http.Error(w, "Failed to encode comments", http.StatusInternalServerError)
+	}
+}
+
 func main() {
 	// Initialise database
 	if err := initDB(); err != nil {
@@ -205,6 +285,7 @@ func main() {
 	http.HandleFunc("/health", withCORS(healthHandler))
 	http.HandleFunc("/topics", withCORS(topicsHandler))
 	http.HandleFunc("/posts", withCORS(postsHandler))
+	http.HandleFunc("/comments", withCORS(commentsHandler))
 
 	fmt.Println("Server listening on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
