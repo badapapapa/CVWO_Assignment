@@ -1,3 +1,5 @@
+I used GPT-5.2 to improve my wording and clarity and provide ideas for this document. I am responsible for the content and quality of the submitted work.
+
 # CVWO Forum Project
 This project is a simple web forum. It allows users to browse topics, view posts and comments and participate in discussions by creating, editing and deleting their own posts and comments. A moderator role is also supported to manage and pin important content
 
