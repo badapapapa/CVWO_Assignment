@@ -21,19 +21,21 @@ type Topic struct {
 
 // Post represents a discussion post under a topic.
 type Post struct {
-	ID      int    `json:"id"`
-	TopicID int    `json:"topicId"`
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	Author  string `json:"author"` // username of author
+	ID       int    `json:"id"`
+	TopicID  int    `json:"topicId"`
+	Title    string `json:"title"`
+	Content  string `json:"content"`
+	Author   string `json:"author"`
+	IsPinned bool   `json:"isPinned"`
 }
 
 // Comment represents a comment under a post.
 type Comment struct {
-	ID      int    `json:"id"`
-	PostID  int    `json:"postId"`
-	Content string `json:"content"`
-	Author  string `json:"author"` // username of author
+	ID       int    `json:"id"`
+	PostID   int    `json:"postId"`
+	Content  string `json:"content"`
+	Author   string `json:"author"`
+	IsPinned bool   `json:"isPinned"`
 }
 
 // User represents a forum user.
@@ -65,6 +67,13 @@ type DeletePostRequest struct {
 	UserID int `json:"userId"`
 }
 
+// PinPostRequest represents the JSON body for pinning/unpinning a post.
+type PinPostRequest struct {
+	ID     int  `json:"id"`
+	UserID int  `json:"userId"`
+	Pinned bool `json:"pinned"`
+}
+
 // CreateCommentRequest represents the JSON body for creating a comment.
 type CreateCommentRequest struct {
 	PostID  int    `json:"postId"`
@@ -83,6 +92,13 @@ type UpdateCommentRequest struct {
 type DeleteCommentRequest struct {
 	ID     int `json:"id"`
 	UserID int `json:"userId"`
+}
+
+// PinCommentRequest represents the JSON body for pinning/unpinning a comment.
+type PinCommentRequest struct {
+	ID     int  `json:"id"`
+	UserID int  `json:"userId"`
+	Pinned bool `json:"pinned"`
 }
 
 // LoginRequest represents the JSON body for login.
@@ -110,6 +126,14 @@ func withCORS(handler http.HandlerFunc) http.HandlerFunc {
 		// Normal request
 		handler(w, r)
 	}
+}
+
+// boolToInt converts a bool to 0/1 for SQLite.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // initDB opens the SQLite database, creates tables if needed,
@@ -146,7 +170,7 @@ func initDB() error {
 		return err
 	}
 
-	// Create posts table with user_id
+	// Create posts table with user_id and is_pinned
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS posts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,6 +178,7 @@ func initDB() error {
 			user_id INTEGER NOT NULL,
 			title TEXT NOT NULL,
 			content TEXT NOT NULL,
+			is_pinned INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id),
 			FOREIGN KEY (user_id) REFERENCES users(id)
@@ -163,13 +188,14 @@ func initDB() error {
 		return err
 	}
 
-	// Create comments table with user_id
+	// Create comments table with user_id and is_pinned
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS comments (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			post_id INTEGER NOT NULL,
 			user_id INTEGER NOT NULL,
 			content TEXT NOT NULL,
+			is_pinned INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (post_id) REFERENCES posts(id),
 			FOREIGN KEY (user_id) REFERENCES users(id)
@@ -219,11 +245,11 @@ func initDB() error {
 	}
 	if postCount == 0 {
 		_, err = db.Exec(`
-			INSERT INTO posts (topic_id, user_id, title, content) VALUES
-				(1, 1, "Welcome to the forum", "Introduce yourself and say hi!"),
-				(1, 2, "General chat", "Talk about anything not related to homework."),
-				(2, 1, "Math homework question", "I am stuck on question 3 of the worksheet."),
-				(2, 2, "Project deadline reminder", "Don't forget the assignment is due next week.");
+			INSERT INTO posts (topic_id, user_id, title, content, is_pinned) VALUES
+				(1, 1, "Welcome to the forum", "Introduce yourself and say hi!", 1),
+				(1, 2, "General chat", "Talk about anything not related to homework.", 0),
+				(2, 1, "Math homework question", "I am stuck on question 3 of the worksheet.", 0),
+				(2, 2, "Project deadline reminder", "Don't forget the assignment is due next week.", 0);
 		`)
 		if err != nil {
 			return err
@@ -237,12 +263,12 @@ func initDB() error {
 	}
 	if commentCount == 0 {
 		_, err = db.Exec(`
-			INSERT INTO comments (post_id, user_id, content) VALUES
-				(1, 1, "Hello everyone!"),
-				(1, 2, "Nice to meet you all."),
-				(2, 2, "I love random chats."),
-				(3, 1, "Same, I'm also stuck on that question."),
-				(4, 2, "Thanks for the reminder!");
+			INSERT INTO comments (post_id, user_id, content, is_pinned) VALUES
+				(1, 1, "Hello everyone!", 1),
+				(1, 2, "Nice to meet you all.", 0),
+				(2, 2, "I love random chats.", 0),
+				(3, 1, "Same, I'm also stuck on that question.", 0),
+				(4, 2, "Thanks for the reminder!", 0);
 		`)
 		if err != nil {
 			return err
@@ -425,11 +451,11 @@ func handleListPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(`
-		SELECT posts.id, posts.topic_id, posts.title, posts.content, users.username
+		SELECT posts.id, posts.topic_id, posts.title, posts.content, users.username, posts.is_pinned
 		FROM posts
 		JOIN users ON posts.user_id = users.id
 		WHERE posts.topic_id = ?
-		ORDER BY posts.id
+		ORDER BY posts.is_pinned DESC, posts.id
 	`, topicID)
 	if err != nil {
 		http.Error(w, "Failed to query posts", http.StatusInternalServerError)
@@ -440,7 +466,7 @@ func handleListPosts(w http.ResponseWriter, r *http.Request) {
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.ID, &p.TopicID, &p.Title, &p.Content, &p.Author); err != nil {
+		if err := rows.Scan(&p.ID, &p.TopicID, &p.Title, &p.Content, &p.Author, &p.IsPinned); err != nil {
 			http.Error(w, "Failed to scan post", http.StatusInternalServerError)
 			return
 		}
@@ -466,7 +492,7 @@ func handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.Exec(
-		"INSERT INTO posts (topic_id, user_id, title, content) VALUES (?, ?, ?, ?)",
+		"INSERT INTO posts (topic_id, user_id, title, content, is_pinned) VALUES (?, ?, ?, ?, 0)",
 		req.TopicID, req.UserID, req.Title, req.Content,
 	)
 	if err != nil {
@@ -487,11 +513,12 @@ func handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created := Post{
-		ID:      int(newID),
-		TopicID: req.TopicID,
-		Title:   req.Title,
-		Content: req.Content,
-		Author:  author,
+		ID:       int(newID),
+		TopicID:  req.TopicID,
+		Title:    req.Title,
+		Content:  req.Content,
+		Author:   author,
+		IsPinned: false,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -534,22 +561,24 @@ func handleUpdatePost(w http.ResponseWriter, r *http.Request) {
 
 	var topicID int
 	var author string
+	var isPinned bool
 	if err := db.QueryRow(`
-		SELECT posts.topic_id, users.username
+		SELECT posts.topic_id, users.username, posts.is_pinned
 		FROM posts
 		JOIN users ON posts.user_id = users.id
 		WHERE posts.id = ?
-	`, req.ID).Scan(&topicID, &author); err != nil {
+	`, req.ID).Scan(&topicID, &author, &isPinned); err != nil {
 		http.Error(w, "Failed to reload updated post", http.StatusInternalServerError)
 		return
 	}
 
 	updated := Post{
-		ID:      req.ID,
-		TopicID: topicID,
-		Title:   req.Title,
-		Content: req.Content,
-		Author:  author,
+		ID:       req.ID,
+		TopicID:  topicID,
+		Title:    req.Title,
+		Content:  req.Content,
+		Author:   author,
+		IsPinned: isPinned,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -595,6 +624,70 @@ func handleDeletePost(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pinPostHandler handles POST /posts/pin
+// Only moderators can pin/unpin posts.
+func pinPostHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PinPostRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == 0 || req.UserID == 0 {
+		http.Error(w, "Missing id or userId", http.StatusBadRequest)
+		return
+	}
+
+	isMod, err := isUserModerator(req.UserID)
+	if err != nil {
+		http.Error(w, "Authorization check failed", http.StatusInternalServerError)
+		return
+	}
+	if !isMod {
+		http.Error(w, "Only moderators can pin posts", http.StatusForbidden)
+		return
+	}
+
+	if _, err := db.Exec(
+		"UPDATE posts SET is_pinned = ? WHERE id = ?",
+		boolToInt(req.Pinned), req.ID,
+	); err != nil {
+		http.Error(w, "Failed to update pin status", http.StatusInternalServerError)
+		return
+	}
+
+	var topicID int
+	var title, content, author string
+	var isPinned bool
+	if err := db.QueryRow(`
+		SELECT posts.topic_id, posts.title, posts.content, users.username, posts.is_pinned
+		FROM posts
+		JOIN users ON posts.user_id = users.id
+		WHERE posts.id = ?
+	`, req.ID).Scan(&topicID, &title, &content, &author, &isPinned); err != nil {
+		http.Error(w, "Failed to reload pinned post", http.StatusInternalServerError)
+		return
+	}
+
+	updated := Post{
+		ID:       req.ID,
+		TopicID:  topicID,
+		Title:    title,
+		Content:  content,
+		Author:   author,
+		IsPinned: isPinned,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(updated); err != nil {
+		http.Error(w, "Failed to encode pinned post", http.StatusInternalServerError)
+	}
+}
+
 // commentsHandler handles:
 //   - GET    /comments?postId=1 → list comments for a post
 //   - POST   /comments          → create a new comment
@@ -630,11 +723,11 @@ func handleListComments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(`
-		SELECT comments.id, comments.post_id, comments.content, users.username
+		SELECT comments.id, comments.post_id, comments.content, users.username, comments.is_pinned
 		FROM comments
 		JOIN users ON comments.user_id = users.id
 		WHERE comments.post_id = ?
-		ORDER BY comments.id
+		ORDER BY comments.is_pinned DESC, comments.id
 	`, postID)
 	if err != nil {
 		http.Error(w, "Failed to query comments", http.StatusInternalServerError)
@@ -645,7 +738,7 @@ func handleListComments(w http.ResponseWriter, r *http.Request) {
 	var comments []Comment
 	for rows.Next() {
 		var cmt Comment
-		if err := rows.Scan(&cmt.ID, &cmt.PostID, &cmt.Content, &cmt.Author); err != nil {
+		if err := rows.Scan(&cmt.ID, &cmt.PostID, &cmt.Content, &cmt.Author, &cmt.IsPinned); err != nil {
 			http.Error(w, "Failed to scan comment", http.StatusInternalServerError)
 			return
 		}
@@ -671,7 +764,7 @@ func handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.Exec(
-		"INSERT INTO comments (post_id, user_id, content) VALUES (?, ?, ?)",
+		"INSERT INTO comments (post_id, user_id, content, is_pinned) VALUES (?, ?, ?, 0)",
 		req.PostID, req.UserID, req.Content,
 	)
 	if err != nil {
@@ -692,10 +785,11 @@ func handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created := Comment{
-		ID:      int(newID),
-		PostID:  req.PostID,
-		Content: req.Content,
-		Author:  author,
+		ID:       int(newID),
+		PostID:   req.PostID,
+		Content:  req.Content,
+		Author:   author,
+		IsPinned: false,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -738,21 +832,23 @@ func handleUpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	var postID int
 	var author string
+	var isPinned bool
 	if err := db.QueryRow(`
-		SELECT comments.post_id, users.username
+		SELECT comments.post_id, users.username, comments.is_pinned
 		FROM comments
 		JOIN users ON comments.user_id = users.id
 		WHERE comments.id = ?
-	`, req.ID).Scan(&postID, &author); err != nil {
+	`, req.ID).Scan(&postID, &author, &isPinned); err != nil {
 		http.Error(w, "Failed to reload updated comment", http.StatusInternalServerError)
 		return
 	}
 
 	updated := Comment{
-		ID:      req.ID,
-		PostID:  postID,
-		Content: req.Content,
-		Author:  author,
+		ID:       req.ID,
+		PostID:   postID,
+		Content:  req.Content,
+		Author:   author,
+		IsPinned: isPinned,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -791,6 +887,69 @@ func handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pinCommentHandler handles POST /comments/pin
+// Only moderators can pin/unpin comments.
+func pinCommentHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req PinCommentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == 0 || req.UserID == 0 {
+		http.Error(w, "Missing id or userId", http.StatusBadRequest)
+		return
+	}
+
+	isMod, err := isUserModerator(req.UserID)
+	if err != nil {
+		http.Error(w, "Authorization check failed", http.StatusInternalServerError)
+		return
+	}
+	if !isMod {
+		http.Error(w, "Only moderators can pin comments", http.StatusForbidden)
+		return
+	}
+
+	if _, err := db.Exec(
+		"UPDATE comments SET is_pinned = ? WHERE id = ?",
+		boolToInt(req.Pinned), req.ID,
+	); err != nil {
+		http.Error(w, "Failed to update pin status", http.StatusInternalServerError)
+		return
+	}
+
+	var postID int
+	var content, author string
+	var isPinned bool
+	if err := db.QueryRow(`
+		SELECT comments.post_id, comments.content, users.username, comments.is_pinned
+		FROM comments
+		JOIN users ON comments.user_id = users.id
+		WHERE comments.id = ?
+	`, req.ID).Scan(&postID, &content, &author, &isPinned); err != nil {
+		http.Error(w, "Failed to reload pinned comment", http.StatusInternalServerError)
+		return
+	}
+
+	updated := Comment{
+		ID:       req.ID,
+		PostID:   postID,
+		Content:  content,
+		Author:   author,
+		IsPinned: isPinned,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(updated); err != nil {
+		http.Error(w, "Failed to encode pinned comment", http.StatusInternalServerError)
+	}
+}
+
 func main() {
 	// Initialise database
 	if err := initDB(); err != nil {
@@ -803,7 +962,9 @@ func main() {
 	http.HandleFunc("/login", withCORS(loginHandler))
 	http.HandleFunc("/topics", withCORS(topicsHandler))
 	http.HandleFunc("/posts", withCORS(postsHandler))
+	http.HandleFunc("/posts/pin", withCORS(pinPostHandler))
 	http.HandleFunc("/comments", withCORS(commentsHandler))
+	http.HandleFunc("/comments/pin", withCORS(pinCommentHandler))
 
 	fmt.Println("Server listening on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {

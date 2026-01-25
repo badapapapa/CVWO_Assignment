@@ -1,4 +1,5 @@
 import { useEffect, useState, FormEvent } from "react";
+import "./App.css";
 
 type Topic = {
   id: number;
@@ -12,6 +13,7 @@ type Post = {
   title: string;
   content: string;
   author: string;
+  isPinned: boolean;
 };
 
 type Comment = {
@@ -19,6 +21,7 @@ type Comment = {
   postId: number;
   content: string;
   author: string;
+  isPinned: boolean;
 };
 
 type User = {
@@ -71,23 +74,18 @@ function App() {
 
   // Load topics on first render
   useEffect(() => {
-    console.log("Fetching topics from backend...");
-
     fetch("http://localhost:8080/topics")
       .then((res) => {
-        console.log("Response from /topics:", res.status, res.statusText);
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
         return res.json();
       })
       .then((data: Topic[]) => {
-        console.log("Topics data:", data);
         setTopics(data);
         setLoadingTopics(false);
       })
       .catch((err: unknown) => {
-        console.error("Error while fetching topics:", err);
         setTopicsError(
           err instanceof Error ? err.message : "Unknown error fetching topics"
         );
@@ -115,19 +113,16 @@ function App() {
       body: JSON.stringify({ username: trimmed }),
     })
       .then((res) => {
-        console.log("Response from /login:", res.status, res.statusText);
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
         return res.json();
       })
       .then((user: User) => {
-        console.log("Logged in as:", user);
         setCurrentUser(user);
         setLoggingIn(false);
       })
       .catch((err: unknown) => {
-        console.error("Error while logging in:", err);
         setLoginError(
           err instanceof Error ? err.message : "Unknown error during login"
         );
@@ -153,6 +148,8 @@ function App() {
     );
   };
 
+  const isModerator = currentUser?.isModerator === true;
+
   // When a topic is clicked, load its posts
   const handleTopicClick = (topic: Topic) => {
     setSelectedTopic(topic);
@@ -173,23 +170,18 @@ function App() {
     setEditingPostId(null);
     setEditingCommentId(null);
 
-    console.log("Fetching posts for topic", topic.id);
-
     fetch(`http://localhost:8080/posts?topicId=${topic.id}`)
       .then((res) => {
-        console.log("Response from /posts:", res.status, res.statusText);
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
         return res.json();
       })
       .then((data: Post[]) => {
-        console.log("Posts data:", data);
         setPosts(data);
         setLoadingPosts(false);
       })
       .catch((err: unknown) => {
-        console.error("Error while fetching posts:", err);
         setPostsError(
           err instanceof Error ? err.message : "Unknown error fetching posts"
         );
@@ -209,23 +201,18 @@ function App() {
     setCreateCommentError(null);
     setEditingCommentId(null);
 
-    console.log("Fetching comments for post", post.id);
-
     fetch(`http://localhost:8080/comments?postId=${post.id}`)
       .then((res) => {
-        console.log("Response from /comments:", res.status, res.statusText);
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
         return res.json();
       })
       .then((data: Comment[]) => {
-        console.log("Comments data:", data);
         setComments(data);
         setLoadingComments(false);
       })
       .catch((err: unknown) => {
-        console.error("Error while fetching comments:", err);
         setCommentsError(
           err instanceof Error
             ? err.message
@@ -258,8 +245,6 @@ function App() {
       content: newPostContent.trim(),
     };
 
-    console.log("Creating post:", body);
-
     fetch("http://localhost:8080/posts", {
       method: "POST",
       headers: {
@@ -268,21 +253,18 @@ function App() {
       body: JSON.stringify(body),
     })
       .then((res) => {
-        console.log("Response from POST /posts:", res.status, res.statusText);
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
         return res.json();
       })
       .then((created: Post) => {
-        console.log("Created post:", created);
         setPosts((prev) => [...prev, created]);
         setNewPostTitle("");
         setNewPostContent("");
         setCreatingPost(false);
       })
       .catch((err: unknown) => {
-        console.error("Error while creating post:", err);
         setCreatePostError(
           err instanceof Error ? err.message : "Unknown error creating post"
         );
@@ -333,7 +315,6 @@ function App() {
       body: JSON.stringify(body),
     })
       .then((res) => {
-        console.log("Response from PUT /posts:", res.status, res.statusText);
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
@@ -343,12 +324,10 @@ function App() {
         setPosts((prev) =>
           prev.map((p) => (p.id === updated.id ? updated : p))
         );
-        // If currently selectedPost is this one, update it too
         setSelectedPost((prev) => (prev && prev.id === updated.id ? updated : prev));
         cancelEditPost();
       })
       .catch((err: unknown) => {
-        console.error("Error while updating post:", err);
         setEditPostError(
           err instanceof Error ? err.message : "Unknown error updating post"
         );
@@ -375,25 +354,62 @@ function App() {
       body: JSON.stringify(body),
     })
       .then((res) => {
-        console.log("Response from DELETE /posts:", res.status, res.statusText);
         if (!res.ok && res.status !== 204) {
           throw new Error(`HTTP error ${res.status}`);
         }
-        // Remove post from list
         setPosts((prev) => prev.filter((post) => post.id !== p.id));
-        // If it was selected, clear it and comments
         setSelectedPost((prev) => (prev && prev.id === p.id ? null : prev));
         if (selectedPost && selectedPost.id === p.id) {
           setComments([]);
         }
       })
       .catch((err: unknown) => {
-        console.error("Error while deleting post:", err);
-        alert(
-          err instanceof Error
-            ? `Error deleting post: ${err.message}`
-            : "Error deleting post"
-        );
+        const msg =
+          err instanceof Error ? err.message : "Unknown error deleting post";
+        alert(`Error deleting post: ${msg}`);
+      });
+  };
+
+  // Handle pin/unpin post (moderator only)
+  const handleTogglePinPost = (p: Post) => {
+    if (!currentUser || !isModerator) return;
+
+    const body = {
+      id: p.id,
+      userId: currentUser.id,
+      pinned: !p.isPinned,
+    };
+
+    fetch("http://localhost:8080/posts/pin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((updated: Post) => {
+        setPosts((prev) => {
+          const next = prev.map((post) =>
+            post.id === updated.id ? updated : post
+          );
+          // Ensure pinned first visually
+          return next.slice().sort((a, b) => {
+            if (a.isPinned === b.isPinned) return a.id - b.id;
+            return a.isPinned ? -1 : 1;
+          });
+        });
+        setSelectedPost((prev) => (prev && prev.id === updated.id ? updated : prev));
+      })
+      .catch((err: unknown) => {
+        const msg =
+          err instanceof Error ? err.message : "Unknown error pinning post";
+        alert(`Error pinning post: ${msg}`);
       });
   };
 
@@ -419,8 +435,6 @@ function App() {
       content: newCommentContent.trim(),
     };
 
-    console.log("Creating comment:", body);
-
     fetch("http://localhost:8080/comments", {
       method: "POST",
       headers: {
@@ -429,24 +443,17 @@ function App() {
       body: JSON.stringify(body),
     })
       .then((res) => {
-        console.log(
-          "Response from POST /comments:",
-          res.status,
-          res.statusText
-        );
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
         return res.json();
       })
       .then((created: Comment) => {
-        console.log("Created comment:", created);
         setComments((prev) => [...prev, created]);
         setNewCommentContent("");
         setCreatingComment(false);
       })
       .catch((err: unknown) => {
-        console.error("Error while creating comment:", err);
         setCreateCommentError(
           err instanceof Error ? err.message : "Unknown error creating comment"
         );
@@ -494,11 +501,6 @@ function App() {
       body: JSON.stringify(body),
     })
       .then((res) => {
-        console.log(
-          "Response from PUT /comments:",
-          res.status,
-          res.statusText
-        );
         if (!res.ok) {
           throw new Error(`HTTP error ${res.status}`);
         }
@@ -511,7 +513,6 @@ function App() {
         cancelEditComment();
       })
       .catch((err: unknown) => {
-        console.error("Error while updating comment:", err);
         setEditCommentError(
           err instanceof Error
             ? err.message
@@ -540,333 +541,497 @@ function App() {
       body: JSON.stringify(body),
     })
       .then((res) => {
-        console.log(
-          "Response from DELETE /comments:",
-          res.status,
-          res.statusText
-        );
         if (!res.ok && res.status !== 204) {
           throw new Error(`HTTP error ${res.status}`);
         }
         setComments((prev) => prev.filter((comment) => comment.id !== c.id));
       })
       .catch((err: unknown) => {
-        console.error("Error while deleting comment:", err);
-        alert(
+        const msg =
+          err instanceof Error ? err.message : "Unknown error deleting comment";
+        alert(`Error deleting comment: ${msg}`);
+      });
+  };
+
+  // Handle pin/unpin comment (moderator only)
+  const handleTogglePinComment = (c: Comment) => {
+    if (!currentUser || !isModerator) return;
+
+    const body = {
+      id: c.id,
+      userId: currentUser.id,
+      pinned: !c.isPinned,
+    };
+
+    fetch("http://localhost:8080/comments/pin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((updated: Comment) => {
+        setComments((prev) => {
+          const next = prev.map((comment) =>
+            comment.id === updated.id ? updated : comment
+          );
+          return next.slice().sort((a, b) => {
+            if (a.isPinned === b.isPinned) return a.id - b.id;
+            return a.isPinned ? -1 : 1;
+          });
+        });
+      })
+      .catch((err: unknown) => {
+        const msg =
           err instanceof Error
-            ? `Error deleting comment: ${err.message}`
-            : "Error deleting comment"
-        );
+            ? err.message
+            : "Unknown error pinning comment";
+        alert(`Error pinning comment: ${msg}`);
       });
   };
 
   return (
-    <div style={{ padding: "1rem", fontFamily: "system-ui, sans-serif" }}>
-      <h1>Forum</h1>
+    <div className="app">
+      <div className="app-shell">
+        <header className="app-header">
+          <div className="app-title">
+            <h1>CVWO Forum</h1>
+            <span>Simple discussion board with users and moderation</span>
+          </div>
 
-      {/* Login section */}
-      <section
-        style={{
-          marginBottom: "1rem",
-          padding: "0.75rem",
-          border: "1px solid #ccc",
-          borderRadius: "4px",
-          maxWidth: "400px",
-        }}
-      >
-        <h2>Login</h2>
-        {currentUser ? (
-          <>
-            <p>
-              Logged in as{" "}
-              <strong>
-                {currentUser.username}
-                {currentUser.isModerator ? " (moderator)" : ""}
-              </strong>
-            </p>
-            <button onClick={handleLogout}>Log out</button>
-          </>
-        ) : (
-          <form onSubmit={handleLogin}>
-            <div style={{ marginBottom: "0.5rem" }}>
-              <label>
-                Username:{" "}
-                <input
-                  type="text"
-                  value={loginName}
-                  onChange={(e) => setLoginName(e.target.value)}
-                />
-              </label>
-            </div>
-            {loginError && <p style={{ color: "red" }}>Error: {loginError}</p>}
-            <button type="submit" disabled={loggingIn}>
-              {loggingIn ? "Logging in..." : "Login / Sign up"}
-            </button>
-            <p style={{ fontSize: "0.8rem", color: "#555", marginTop: "0.25rem" }}>
-              Tip: log in as <code>alice</code> to use moderator powers.
-            </p>
-          </form>
-        )}
-      </section>
-
-      <section>
-        <h2>Topics</h2>
-
-        {loadingTopics && <p>Loading topics...</p>}
-        {topicsError && <p style={{ color: "red" }}>Error: {topicsError}</p>}
-
-        {!loadingTopics && !topicsError && (
-          <ul>
-            {topics.map((t) => (
-              <li key={t.id}>
-                <button
-                  style={{
-                    border: "none",
-                    background: "none",
-                    color: "blue",
-                    textDecoration: "underline",
-                    cursor: "pointer",
-                    padding: 0,
-                    fontSize: "1rem",
-                  }}
-                  onClick={() => handleTopicClick(t)}
+          <section className="login-panel">
+            <h2 style={{ margin: 0, fontSize: "0.95rem" }}>Login</h2>
+            {currentUser ? (
+              <>
+                <p
+                  className="helper-text"
+                  style={{ marginBottom: "0.25rem" }}
                 >
-                  <strong>{t.title}</strong>
-                </button>{" "}
-                – {t.description}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <hr style={{ margin: "1.5rem 0" }} />
-
-      <section>
-        {selectedTopic ? (
-          <>
-            <h2>Posts under: {selectedTopic.title}</h2>
-
-            {loadingPosts && <p>Loading posts...</p>}
-            {postsError && <p style={{ color: "red" }}>Error: {postsError}</p>}
-
-            {!loadingPosts && !postsError && posts.length === 0 && (
-              <p>No posts for this topic yet.</p>
-            )}
-
-            {!loadingPosts && !postsError && posts.length > 0 && (
-              <ul>
-                {posts.map((p) => (
-                  <li key={p.id} style={{ marginBottom: "0.75rem" }}>
-                    {editingPostId === p.id ? (
-                      <form onSubmit={handleSavePost}>
-                        <div style={{ marginBottom: "0.25rem" }}>
-                          <input
-                            type="text"
-                            value={editPostTitle}
-                            onChange={(e) => setEditPostTitle(e.target.value)}
-                            style={{ width: "100%", padding: "0.25rem" }}
-                          />
-                        </div>
-                        <div style={{ marginBottom: "0.25rem" }}>
-                          <textarea
-                            value={editPostContent}
-                            onChange={(e) =>
-                              setEditPostContent(e.target.value)
-                            }
-                            rows={3}
-                            style={{ width: "100%", padding: "0.25rem" }}
-                          />
-                        </div>
-                        {editPostError && (
-                          <p style={{ color: "red" }}>Error: {editPostError}</p>
-                        )}
-                        <button type="submit" disabled={savingPost}>
-                          {savingPost ? "Saving..." : "Save"}
-                        </button>{" "}
-                        <button type="button" onClick={cancelEditPost}>
-                          Cancel
-                        </button>
-                      </form>
-                    ) : (
-                      <>
-                        <button
-                          style={{
-                            border: "none",
-                            background: "none",
-                            color: "purple",
-                            textDecoration: "underline",
-                            cursor: "pointer",
-                            padding: 0,
-                            fontSize: "1rem",
-                          }}
-                          onClick={() => handlePostClick(p)}
-                        >
-                          <strong>{p.title}</strong>
-                        </button>
-                        <p>{p.content}</p>
-                        <p style={{ fontSize: "0.85rem", color: "#555" }}>
-                          by {p.author}
-                        </p>
-                        {canModifyPost(p) && (
-                          <div style={{ fontSize: "0.85rem" }}>
-                            <button
-                              type="button"
-                              onClick={() => startEditPost(p)}
-                              style={{ marginRight: "0.5rem" }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeletePost(p)}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <h3>Create a new post</h3>
-            <form onSubmit={handleCreatePost} style={{ maxWidth: "400px" }}>
-              <div style={{ marginBottom: "0.5rem" }}>
-                <label>
-                  Title:
-                  <br />
+                  Logged in as{" "}
+                  <strong>
+                    {currentUser.username}
+                    {currentUser.isModerator ? " (moderator)" : ""}
+                  </strong>
+                </p>
+                <button className="btn" type="button" onClick={handleLogout}>
+                  Log out
+                </button>
+              </>
+            ) : (
+              <>
+                <form onSubmit={handleLogin}>
                   <input
                     type="text"
-                    value={newPostTitle}
-                    onChange={(e) => setNewPostTitle(e.target.value)}
-                    style={{ width: "100%", padding: "0.25rem" }}
+                    value={loginName}
+                    placeholder="Enter username"
+                    onChange={(e) => setLoginName(e.target.value)}
                   />
-                </label>
-              </div>
-              <div style={{ marginBottom: "0.5rem" }}>
-                <label>
-                  Content:
-                  <br />
-                  <textarea
-                    value={newPostContent}
-                    onChange={(e) => setNewPostContent(e.target.value)}
-                    rows={4}
-                    style={{ width: "100%", padding: "0.25rem" }}
-                  />
-                </label>
-              </div>
-              {createPostError && (
-                <p style={{ color: "red" }}>Error: {createPostError}</p>
-              )}
-              <button type="submit" disabled={creatingPost}>
-                {creatingPost ? "Creating..." : "Create post"}
-              </button>
-            </form>
-          </>
-        ) : (
-          <p>Select a topic to view its posts.</p>
-        )}
-      </section>
+                  <button
+                    className="btn btn-primary"
+                    type="submit"
+                    disabled={loggingIn}
+                  >
+                    {loggingIn ? "Logging in..." : "Login / Sign up"}
+                  </button>
+                </form>
+                {loginError && (
+                  <p className="error-text">Error: {loginError}</p>
+                )}
+              </>
+            )}
+          </section>
+        </header>
 
-      <hr style={{ margin: "1.5rem 0" }} />
+        <main className="app-main">
+          {/* Topics panel */}
+          <section className="card">
+            <h2>Topics</h2>
+            <p className="card-subtitle">
+              Choose a topic to see posts and join the discussion.
+            </p>
 
-      <section>
-        {selectedPost ? (
-          <>
-            <h2>Comments for: {selectedPost.title}</h2>
-
-            {loadingComments && <p>Loading comments...</p>}
-            {commentsError && (
-              <p style={{ color: "red" }}>Error: {commentsError}</p>
+            {loadingTopics && <p>Loading topics...</p>}
+            {topicsError && (
+              <p className="error-text">Error: {topicsError}</p>
             )}
 
-            {!loadingComments && !commentsError && comments.length === 0 && (
-              <p>No comments for this post yet.</p>
-            )}
-
-            {!loadingComments && !commentsError && comments.length > 0 && (
-              <ul>
-                {comments.map((c) => (
-                  <li key={c.id} style={{ marginBottom: "0.5rem" }}>
-                    {editingCommentId === c.id ? (
-                      <form onSubmit={handleSaveComment}>
-                        <div style={{ marginBottom: "0.25rem" }}>
-                          <textarea
-                            value={editCommentContent}
-                            onChange={(e) =>
-                              setEditCommentContent(e.target.value)
-                            }
-                            rows={2}
-                            style={{ width: "100%", padding: "0.25rem" }}
-                          />
-                        </div>
-                        {editCommentError && (
-                          <p style={{ color: "red" }}>
-                            Error: {editCommentError}
-                          </p>
-                        )}
-                        <button type="submit" disabled={savingComment}>
-                          {savingComment ? "Saving..." : "Save"}
-                        </button>{" "}
-                        <button type="button" onClick={cancelEditComment}>
-                          Cancel
-                        </button>
-                      </form>
-                    ) : (
-                      <>
-                        <div>{c.content}</div>
-                        <div style={{ fontSize: "0.85rem", color: "#555" }}>
-                          by {c.author}
-                        </div>
-                        {canModifyComment(c) && (
-                          <div style={{ fontSize: "0.85rem" }}>
-                            <button
-                              type="button"
-                              onClick={() => startEditComment(c)}
-                              style={{ marginRight: "0.5rem" }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteComment(c)}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
+            {!loadingTopics && !topicsError && (
+              <ul className="topics-list">
+                {topics.map((t) => (
+                  <li
+                    key={t.id}
+                    className="topic-item"
+                    onClick={() => handleTopicClick(t)}
+                  >
+                    <div className="topic-item-title">{t.title}</div>
+                    <div className="topic-item-description">
+                      {t.description}
+                    </div>
                   </li>
                 ))}
               </ul>
             )}
+          </section>
 
-            <h3>Add a comment</h3>
-            <form onSubmit={handleCreateComment} style={{ maxWidth: "400px" }}>
-              <div style={{ marginBottom: "0.5rem" }}>
-                <textarea
-                  value={newCommentContent}
-                  onChange={(e) => setNewCommentContent(e.target.value)}
-                  rows={3}
-                  style={{ width: "100%", padding: "0.25rem" }}
-                />
-              </div>
-              {createCommentError && (
-                <p style={{ color: "red" }}>Error: {createCommentError}</p>
+          {/* Posts + Comments panel */}
+          <section className="post-comment-layout">
+            {/* Posts card */}
+            <div className="card">
+              {selectedTopic ? (
+                <>
+                  <h2>Posts under: {selectedTopic.title}</h2>
+                  <p className="card-subtitle">
+                    Click a post title to view and reply with comments.
+                  </p>
+
+                  {loadingPosts && <p>Loading posts...</p>}
+                  {postsError && (
+                    <p className="error-text">Error: {postsError}</p>
+                  )}
+
+                  {!loadingPosts && !postsError && posts.length === 0 && (
+                    <p className="helper-text">
+                      No posts for this topic yet. Be the first to start one!
+                    </p>
+                  )}
+
+                  {!loadingPosts && !postsError && posts.length > 0 && (
+                    <ul className="posts-list">
+                      {posts.map((p) => (
+                        <li key={p.id} className="post-item">
+                          {editingPostId === p.id ? (
+                            <form onSubmit={handleSavePost}>
+                              <div className="form-field">
+                                <label>
+                                  Title
+                                  <input
+                                    className="form-input"
+                                    type="text"
+                                    value={editPostTitle}
+                                    onChange={(e) =>
+                                      setEditPostTitle(e.target.value)
+                                    }
+                                  />
+                                </label>
+                              </div>
+                              <div className="form-field">
+                                <label>
+                                  Content
+                                  <textarea
+                                    className="form-textarea"
+                                    rows={3}
+                                    value={editPostContent}
+                                    onChange={(e) =>
+                                      setEditPostContent(e.target.value)
+                                    }
+                                  />
+                                </label>
+                              </div>
+                              {editPostError && (
+                                <p className="error-text">
+                                  Error: {editPostError}
+                                </p>
+                              )}
+                              <div className="actions">
+                                <button
+                                  className="btn btn-primary"
+                                  type="submit"
+                                  disabled={savingPost}
+                                >
+                                  {savingPost ? "Saving..." : "Save"}
+                                </button>
+                                <button
+                                  className="btn"
+                                  type="button"
+                                  onClick={cancelEditPost}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              <div className="post-header">
+                                <button
+                                  className="post-title-button"
+                                  type="button"
+                                  onClick={() => handlePostClick(p)}
+                                >
+                                  {p.title}
+                                </button>
+                                <div style={{ display: "flex", gap: "0.3rem" }}>
+                                  <span className="chip">Post</span>
+                                  {p.isPinned && (
+                                    <span className="chip">Pinned</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="post-body">{p.content}</div>
+                              <div className="post-meta">by {p.author}</div>
+                              <div className="actions">
+                                {canModifyPost(p) && (
+                                  <>
+                                    <button
+                                      className="btn"
+                                      type="button"
+                                      onClick={() => startEditPost(p)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      className="btn btn-danger"
+                                      type="button"
+                                      onClick={() => handleDeletePost(p)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                                {isModerator && (
+                                  <button
+                                    className="btn"
+                                    type="button"
+                                    onClick={() => handleTogglePinPost(p)}
+                                  >
+                                    {p.isPinned ? "Unpin" : "Pin"}
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="form-section">
+                    <h3 style={{ margin: "0 0 0.5rem" }}>
+                      Create a new post
+                    </h3>
+                    <form onSubmit={handleCreatePost}>
+                      <div className="form-field">
+                        <label>
+                          Title
+                          <input
+                            className="form-input"
+                            type="text"
+                            value={newPostTitle}
+                            onChange={(e) =>
+                              setNewPostTitle(e.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="form-field">
+                        <label>
+                          Content
+                          <textarea
+                            className="form-textarea"
+                            rows={4}
+                            value={newPostContent}
+                            onChange={(e) =>
+                              setNewPostContent(e.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
+                      {createPostError && (
+                        <p className="error-text">
+                          Error: {createPostError}
+                        </p>
+                      )}
+                      <button
+                        className="btn btn-primary"
+                        type="submit"
+                        disabled={creatingPost}
+                      >
+                        {creatingPost ? "Creating..." : "Create post"}
+                      </button>
+                    </form>
+                    {!currentUser && (
+                      <p className="helper-text">
+                        You must be logged in to create a post.
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2>Posts</h2>
+                  <p className="helper-text">
+                    Select a topic on the left to see its posts.
+                  </p>
+                </>
               )}
-              <button type="submit" disabled={creatingComment}>
-                {creatingComment ? "Adding..." : "Add comment"}
-              </button>
-            </form>
-          </>
-        ) : (
-          <p>Select a post to view its comments.</p>
-        )}
-      </section>
+            </div>
+
+            {/* Comments card */}
+            <div className="card">
+              {selectedPost ? (
+                <>
+                  <h2>Comments for: {selectedPost.title}</h2>
+                  <p className="card-subtitle">
+                    Reply to this post or edit your own comments.
+                  </p>
+
+                  {loadingComments && <p>Loading comments...</p>}
+                  {commentsError && (
+                    <p className="error-text">Error: {commentsError}</p>
+                  )}
+
+                  {!loadingComments &&
+                    !commentsError &&
+                    comments.length === 0 && (
+                      <p className="helper-text">
+                        No comments yet. Start the conversation!
+                      </p>
+                    )}
+
+                  {!loadingComments &&
+                    !commentsError &&
+                    comments.length > 0 && (
+                      <ul className="comments-list">
+                        {comments.map((c) => (
+                          <li key={c.id} className="comment-item">
+                            {editingCommentId === c.id ? (
+                              <form onSubmit={handleSaveComment}>
+                                <div className="form-field">
+                                  <label>
+                                    Comment
+                                    <textarea
+                                      className="form-textarea"
+                                      rows={2}
+                                      value={editCommentContent}
+                                      onChange={(e) =>
+                                        setEditCommentContent(e.target.value)
+                                      }
+                                    />
+                                  </label>
+                                </div>
+                                {editCommentError && (
+                                  <p className="error-text">
+                                    Error: {editCommentError}
+                                  </p>
+                                )}
+                                <div className="actions">
+                                  <button
+                                    className="btn btn-primary"
+                                    type="submit"
+                                    disabled={savingComment}
+                                  >
+                                    {savingComment ? "Saving..." : "Save"}
+                                  </button>
+                                  <button
+                                    className="btn"
+                                    type="button"
+                                    onClick={cancelEditComment}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </form>
+                            ) : (
+                              <>
+                                <div className="comment-body">
+                                  {c.content}
+                                </div>
+                                <div className="comment-meta">
+                                  by {c.author}{" "}
+                                  {c.isPinned && (
+                                    <span className="chip">Pinned</span>
+                                  )}
+                                </div>
+                                <div className="actions">
+                                  {canModifyComment(c) && (
+                                    <>
+                                      <button
+                                        className="btn"
+                                        type="button"
+                                        onClick={() => startEditComment(c)}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        className="btn btn-danger"
+                                        type="button"
+                                        onClick={() =>
+                                          handleDeleteComment(c)
+                                        }
+                                      >
+                                        Delete
+                                      </button>
+                                    </>
+                                  )}
+                                  {isModerator && (
+                                    <button
+                                      className="btn"
+                                      type="button"
+                                      onClick={() =>
+                                        handleTogglePinComment(c)
+                                      }
+                                    >
+                                      {c.isPinned ? "Unpin" : "Pin"}
+                                    </button>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                  <div className="form-section">
+                    <h3 style={{ margin: "0 0 0.5rem" }}>Add a comment</h3>
+                    <form onSubmit={handleCreateComment}>
+                      <div className="form-field">
+                        <textarea
+                          className="form-textarea"
+                          rows={3}
+                          value={newCommentContent}
+                          onChange={(e) =>
+                            setNewCommentContent(e.target.value)
+                          }
+                        />
+                      </div>
+                      {createCommentError && (
+                        <p className="error-text">
+                          Error: {createCommentError}
+                        </p>
+                      )}
+                      <button
+                        className="btn btn-primary"
+                        type="submit"
+                        disabled={creatingComment}
+                      >
+                        {creatingComment ? "Adding..." : "Add comment"}
+                      </button>
+                    </form>
+                    {!currentUser && (
+                      <p className="helper-text">
+                        You must be logged in to add a comment.
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2>Comments</h2>
+                  <p className="helper-text">
+                    Select a post above to view and add comments.
+                  </p>
+                </>
+              )}
+            </div>
+          </section>
+        </main>
+      </div>
     </div>
   );
 }
